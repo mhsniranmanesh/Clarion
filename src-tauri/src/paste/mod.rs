@@ -2,8 +2,7 @@ use arboard::Clipboard;
 
 pub fn copy_and_paste(text: &str) -> Result<(), String> {
     // Step 1: Copy to clipboard
-    let mut clipboard =
-        Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+    let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
     clipboard
         .set_text(text)
         .map_err(|e| format!("Failed to set clipboard: {e}"))?;
@@ -22,8 +21,7 @@ pub fn copy_and_paste(text: &str) -> Result<(), String> {
 }
 
 pub fn copy_only(text: &str) -> Result<(), String> {
-    let mut clipboard =
-        Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+    let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
     clipboard
         .set_text(text)
         .map_err(|e| format!("Failed to set clipboard: {e}"))?;

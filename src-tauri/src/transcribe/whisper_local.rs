@@ -53,7 +53,9 @@ pub fn available_models() -> Vec<WhisperModel> {
             name: "Large V3 Turbo".into(),
             size: "1.6 GB".into(),
             description: "Best accuracy with optimized speed. Premium.".into(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin".into(),
+            url:
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+                    .into(),
             filename: "ggml-large-v3-turbo.bin".into(),
         },
     ]

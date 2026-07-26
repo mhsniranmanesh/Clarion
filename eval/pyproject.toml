@@ -1,0 +1,24 @@
+[project]
+name = "clarion-eval"
+version = "0.1.0"
+description = "Evaluation harness for multilingual prompt structuring on code-switched Persian/English developer speech"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.32",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Local GGUF inference for Tiny Aya. Kept optional because it pulls a compiler
+# toolchain; the API-backed models work without it.
+local = ["llama-cpp-python>=0.3.0"]
+
+[project.scripts]
+clarion-eval = "clarion_eval.run:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["clarion_eval*"]

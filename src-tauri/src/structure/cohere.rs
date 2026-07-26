@@ -1,13 +1,13 @@
-//! Anthropic Messages backend for the structuring layer.
+//! Cohere Chat v2 backend for the structuring layer.
 //!
-//! This is Clarion's original structuring path and serves as the baseline that
-//! the `eval/` harness measures other providers against.
+//! Works with any model served by the Chat endpoint, including the Command
+//! family and the 3.35B Tiny Aya multilingual models.
 
 use super::{build_system_prompt, build_user_message, StructureResult, MAX_TOKENS, TEMPERATURE};
 use crate::context::ProjectContext;
 use serde::{Deserialize, Serialize};
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
+const API_URL: &str = "https://api.cohere.com/v2/chat";
 
 #[derive(Serialize)]
 struct Message {
@@ -18,10 +18,10 @@ struct Message {
 #[derive(Serialize)]
 struct ApiRequest {
     model: String,
-    max_tokens: u32,
-    temperature: f32,
-    system: String,
     messages: Vec<Message>,
+    temperature: f32,
+    max_tokens: u32,
+    stream: bool,
 }
 
 #[derive(Deserialize)]
@@ -32,8 +32,13 @@ struct ContentBlock {
 }
 
 #[derive(Deserialize)]
-struct ApiResponse {
+struct ResponseMessage {
     content: Vec<ContentBlock>,
+}
+
+#[derive(Deserialize)]
+struct ApiResponse {
+    message: ResponseMessage,
 }
 
 pub async fn structure_prompt(
@@ -43,43 +48,49 @@ pub async fn structure_prompt(
     context: Option<&ProjectContext>,
 ) -> Result<StructureResult, String> {
     if api_key.trim().is_empty() {
-        return Err("Anthropic API key is not set. Add it in Settings.".to_string());
+        return Err("Cohere API key is not set. Add it in Settings.".to_string());
     }
 
     let request = ApiRequest {
         model: model.to_string(),
-        max_tokens: MAX_TOKENS,
+        messages: vec![
+            Message {
+                role: "system".to_string(),
+                content: build_system_prompt(context),
+            },
+            Message {
+                role: "user".to_string(),
+                content: build_user_message(raw_text),
+            },
+        ],
         temperature: TEMPERATURE,
-        system: build_system_prompt(context),
-        messages: vec![Message {
-            role: "user".to_string(),
-            content: build_user_message(raw_text),
-        }],
+        max_tokens: MAX_TOKENS,
+        stream: false,
     };
 
     let client = reqwest::Client::new();
     let response = client
         .post(API_URL)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
+        .bearer_auth(api_key)
         .header("content-type", "application/json")
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Anthropic API request failed: {e}"))?;
+        .map_err(|e| format!("Cohere API request failed: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Anthropic API error ({status}): {body}"));
+        return Err(format!("Cohere API error ({status}): {body}"));
     }
 
     let result: ApiResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse Anthropic response: {e}"))?;
+        .map_err(|e| format!("Failed to parse Cohere response: {e}"))?;
 
     let structured = result
+        .message
         .content
         .iter()
         .find(|block| block.block_type == "text")

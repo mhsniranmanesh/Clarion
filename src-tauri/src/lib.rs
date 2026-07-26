@@ -8,6 +8,7 @@ mod transcribe;
 use audio::recorder::RecordingHandle;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use structure::StructureProvider;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
@@ -36,6 +37,14 @@ pub enum TranscriptionProvider {
     Local,
 }
 
+fn default_structure_provider() -> StructureProvider {
+    StructureProvider::Anthropic
+}
+
+fn default_cohere_model() -> String {
+    "command-a-plus-05-2026".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub openai_api_key: String,
@@ -48,6 +57,14 @@ pub struct AppConfig {
     pub auto_paste: bool,
     #[serde(default)]
     pub audio_device: Option<String>,
+    /// Which backend structures the transcription. Defaults to Anthropic so
+    /// existing installs keep their behaviour on upgrade.
+    #[serde(default = "default_structure_provider")]
+    pub structure_provider: StructureProvider,
+    #[serde(default)]
+    pub cohere_api_key: String,
+    #[serde(default = "default_cohere_model")]
+    pub cohere_model: String,
 }
 
 impl Default for AppConfig {
@@ -62,6 +79,9 @@ impl Default for AppConfig {
             whisper_model: "base".to_string(),
             auto_paste: true,
             audio_device: None,
+            structure_provider: default_structure_provider(),
+            cohere_api_key: std::env::var("COHERE_API_KEY").unwrap_or_default(),
+            cohere_model: default_cohere_model(),
         }
     }
 }
@@ -93,14 +113,10 @@ fn get_config(state: tauri::State<'_, AppState>) -> AppConfig {
 }
 
 #[tauri::command]
-fn update_config(
-    app: AppHandle,
-    state: tauri::State<'_, AppState>,
-    config: AppConfig,
-) {
+fn update_config(app: AppHandle, state: tauri::State<'_, AppState>, config: AppConfig) {
     // Persist to store
     if let Ok(store) = app.store("config.json") {
-        let _ = store.set("config", serde_json::to_value(&config).unwrap_or_default());
+        store.set("config", serde_json::to_value(&config).unwrap_or_default());
     }
     *state.config.lock().unwrap() = config;
 }
@@ -198,8 +214,10 @@ async fn run_pipeline(app: AppHandle) {
             // Run local whisper on a blocking thread (it's CPU-bound)
             let audio = audio_data.clone();
             let model_id = config.whisper_model.clone();
-            match tokio::task::spawn_blocking(move || transcribe::whisper_local::transcribe(&audio, &model_id))
-                .await
+            match tokio::task::spawn_blocking(move || {
+                transcribe::whisper_local::transcribe(&audio, &model_id)
+            })
+            .await
             {
                 Ok(result) => result,
                 Err(e) => Err(format!("Whisper task failed: {e}")),
@@ -208,25 +226,25 @@ async fn run_pipeline(app: AppHandle) {
     };
 
     let transcription = match transcription_result {
-            Ok(t) => {
-                log::info!(
-                    "Transcription complete ({:?}): {} chars, lang={:?}, {}ms",
-                    config.transcription_provider,
-                    t.text.len(),
-                    t.language,
-                    t.duration_ms
-                );
-                let _ = app.emit("transcription-done", &t.text);
-                t
-            }
-            Err(e) => {
-                log::error!("Transcription failed: {e}");
-                set_phase(&app, AppPhase::Error);
-                let _ = app.emit("pipeline-error", &e);
-                reset_to_idle_after(&app, 5);
-                return;
-            }
-        };
+        Ok(t) => {
+            log::info!(
+                "Transcription complete ({:?}): {} chars, lang={:?}, {}ms",
+                config.transcription_provider,
+                t.text.len(),
+                t.language,
+                t.duration_ms
+            );
+            let _ = app.emit("transcription-done", &t.text);
+            t
+        }
+        Err(e) => {
+            log::error!("Transcription failed: {e}");
+            set_phase(&app, AppPhase::Error);
+            let _ = app.emit("pipeline-error", &e);
+            reset_to_idle_after(&app, 5);
+            return;
+        }
+    };
 
     // Step 2: Structure
     set_phase(&app, AppPhase::Structuring);
@@ -237,16 +255,27 @@ async fn run_pipeline(app: AppHandle) {
         .as_ref()
         .map(|dir| context::load_project_context(dir));
 
-    let structured = match structure::claude::structure_prompt(
+    let (structure_model, structure_key) = match config.structure_provider {
+        StructureProvider::Anthropic => (&config.preprocess_model, &config.anthropic_api_key),
+        StructureProvider::Cohere => (&config.cohere_model, &config.cohere_api_key),
+    };
+
+    let structured = match structure::structure_prompt(
+        config.structure_provider,
         &transcription.text,
-        &config.preprocess_model,
-        &config.anthropic_api_key,
+        structure_model,
+        structure_key,
         project_context.as_ref(),
     )
     .await
     {
         Ok(result) => {
-            log::info!("Structuring complete: {} chars", result.structured.len());
+            log::info!(
+                "Structuring complete ({:?}/{}): {} chars",
+                config.structure_provider,
+                structure_model,
+                result.structured.len()
+            );
             result
         }
         Err(e) => {
@@ -342,9 +371,8 @@ fn toggle_window(app: &AppHandle) {
 fn setup_global_shortcut(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let shortcut: Shortcut = hotkey::get_default_shortcut().parse()?;
 
-    app.global_shortcut().on_shortcut(
-        shortcut,
-        move |app, _shortcut, event| {
+    app.global_shortcut()
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
             let state = app.state::<AppState>();
 
             match event.state {
@@ -385,8 +413,7 @@ fn setup_global_shortcut(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
                     });
                 }
             }
-        },
-    )?;
+        })?;
 
     log::info!(
         "Global shortcut registered: {}",
@@ -450,6 +477,11 @@ pub fn run() {
                         config.whisper_model = saved_config.whisper_model;
                         config.auto_paste = saved_config.auto_paste;
                         config.audio_device = saved_config.audio_device;
+                        if !saved_config.cohere_api_key.is_empty() {
+                            config.cohere_api_key = saved_config.cohere_api_key;
+                        }
+                        config.structure_provider = saved_config.structure_provider;
+                        config.cohere_model = saved_config.cohere_model;
                         log::info!("Loaded config from store");
                     }
                 }

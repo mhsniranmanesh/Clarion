@@ -16,6 +16,9 @@
     whisper_model: string;
     auto_paste: boolean;
     audio_device: string | null;
+    structure_provider: 'anthropic' | 'cohere';
+    cohere_api_key: string;
+    cohere_model: string;
   }
 
   interface AudioDevice {
@@ -43,6 +46,26 @@
     whisper_model: 'base',
     auto_paste: true,
     audio_device: null,
+    structure_provider: 'anthropic',
+    cohere_api_key: '',
+    cohere_model: 'command-a-plus-05-2026',
+  });
+
+  // Which API keys the currently selected providers actually require. Cloud
+  // transcription needs OpenAI, local needs nothing; structuring needs whichever
+  // backend is selected. Declared before onMount, which reads it.
+  let missingKeys = $derived.by(() => {
+    const missing: string[] = [];
+    if (config.transcription_provider === 'cloud' && !config.openai_api_key) {
+      missing.push('OpenAI');
+    }
+    if (config.structure_provider === 'anthropic' && !config.anthropic_api_key) {
+      missing.push('Anthropic');
+    }
+    if (config.structure_provider === 'cohere' && !config.cohere_api_key) {
+      missing.push('Cohere');
+    }
+    return missing;
   });
 
   interface ModelStatus {
@@ -67,11 +90,9 @@
     models = await invoke<ModelStatus[]>('get_models_status');
     audioDevices = await invoke<AudioDevice[]>('list_audio_devices');
 
-    // First-run: if no API keys configured, go to Settings
-    const needsSetup =
-      !config.anthropic_api_key &&
-      (config.transcription_provider === 'cloud' ? !config.openai_api_key : true);
-    if (needsSetup) {
+    // First-run: if the keys the current providers actually need are missing,
+    // go to Settings.
+    if (missingKeys.length > 0) {
       currentView = 'settings';
     }
 
@@ -287,12 +308,14 @@
   <!-- Settings View -->
   {:else if currentView === 'settings'}
     <div class="view settings-view">
-      {#if !config.anthropic_api_key || !config.openai_api_key}
+      {#if missingKeys.length > 0}
         <div class="welcome-banner">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
           <div>
             <p class="welcome-title">Welcome to Clarion</p>
-            <p class="welcome-text">Add your API keys below to get started. You'll need an Anthropic key for prompt structuring{#if config.transcription_provider === 'cloud'}, and an OpenAI key for cloud transcription{/if}.</p>
+            <p class="welcome-text">
+              Add your {missingKeys.join(' and ')} {missingKeys.length > 1 ? 'keys' : 'key'} below to get started.
+            </p>
           </div>
         </div>
       {/if}
@@ -311,6 +334,13 @@
             Anthropic
           </label>
           <input id="anthropic-key" type="password" bind:value={config.anthropic_api_key} placeholder="sk-ant-..." spellcheck="false" />
+        </div>
+        <div class="input-group">
+          <label for="cohere-key">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+            Cohere
+          </label>
+          <input id="cohere-key" type="password" bind:value={config.cohere_api_key} placeholder="Optional — for Cohere structuring" spellcheck="false" />
         </div>
       </section>
 
@@ -408,15 +438,51 @@
       <section>
         <h2 class="section-title">Processing</h2>
         <div class="input-group">
-          <label for="model">
+          <!-- svelte-ignore a11y_label_has_associated_control -->
+          <label>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            Structuring model
+            Structuring backend
           </label>
-          <select id="model" bind:value={config.preprocess_model}>
-            <option value="claude-haiku-4-5-20251001">Haiku 4.5 — fast, low cost</option>
-            <option value="claude-sonnet-4-6-20250514">Sonnet 4.6 — higher quality</option>
-          </select>
+          <div class="toggle-group">
+            <button class="toggle-btn" class:toggle-active={config.structure_provider === 'anthropic'} onclick={() => (config.structure_provider = 'anthropic')}>
+              Anthropic
+            </button>
+            <button class="toggle-btn" class:toggle-active={config.structure_provider === 'cohere'} onclick={() => (config.structure_provider = 'cohere')}>
+              Cohere
+            </button>
+          </div>
         </div>
+        {#if config.structure_provider === 'anthropic'}
+          <div class="input-group">
+            <label for="model">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              Model
+            </label>
+            <select id="model" bind:value={config.preprocess_model}>
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5 — fast, low cost</option>
+              <option value="claude-sonnet-4-6-20250514">Sonnet 4.6 — higher quality</option>
+            </select>
+          </div>
+        {:else}
+          <div class="input-group">
+            <label for="cohere-model">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              Model
+            </label>
+            <select id="cohere-model" bind:value={config.cohere_model}>
+              <option value="command-a-plus-05-2026">Command A+ — flagship</option>
+              <option value="command-a-03-2025">Command A</option>
+              <option value="command-a-translate-08-2025">Command A Translate — translation-tuned</option>
+              <option value="tiny-aya-earth">Tiny Aya Earth — 3.35B, West Asian + African</option>
+              <option value="tiny-aya-global">Tiny Aya Global — 3.35B, balanced</option>
+              <option value="command-r7b-12-2024">Command R7B — small, fast</option>
+            </select>
+          </div>
+          <p class="section-hint">
+            Tiny Aya covers 70 languages including Persian at 3.35B parameters. See
+            <code>eval/</code> in the repo for measured quality on code-switched speech.
+          </p>
+        {/if}
         <div class="input-group">
           <label for="project-dir">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>

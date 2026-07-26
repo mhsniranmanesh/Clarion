@@ -19,9 +19,7 @@ pub struct ProjectContext {
 
 pub fn load_project_context(project_dir: &str) -> ProjectContext {
     let dir = Path::new(project_dir);
-    let project_name = dir
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string());
+    let project_name = dir.file_name().map(|n| n.to_string_lossy().to_string());
 
     let mut files = Vec::new();
     for &filename in DEFAULT_CONTEXT_FILES {

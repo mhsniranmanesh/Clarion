@@ -7,9 +7,13 @@ Voice-to-prompt desktop app — hold a shortcut, speak naturally in any language
 ```
 Hold ⌘⇧Space → speak (any language + technical terms)
     → Whisper transcribes (cloud or local)
-    → Claude Haiku restructures into a clear English prompt
+    → an LLM restructures it into a clear English prompt
     → Result pasted into your active app
 ```
+
+The structuring layer is pluggable: **Anthropic** (Claude) or **Cohere** (Command and
+the 3.35B multilingual Tiny Aya models). Which one is actually better at code-switched
+Persian/English developer speech is measured, not assumed — see [`eval/`](eval/).
 
 Built with Tauri v2 (Rust backend, Svelte frontend). Lightweight (~5 MB), runs as a menu bar app.
 
@@ -54,9 +58,14 @@ npm run tauri:dev       # Launches the app with hot-reload
 1. Launch Clarion — it appears in your menu bar
 2. Open Settings (click tray icon or use the Settings tab)
 3. Enter your API keys:
-   - **OpenAI API Key** — for Whisper speech-to-text
+   - **OpenAI API Key** — for Whisper speech-to-text (cloud mode only)
    - **Anthropic API Key** — for Claude prompt structuring
+   - **Cohere API Key** *(optional)* — to use Cohere for structuring instead
 4. (Optional) Switch to **Local** transcription and download a Whisper model for offline use
+5. (Optional) Under Processing, switch the structuring backend between Anthropic and Cohere
+
+Clarion only asks for the keys the providers you selected actually need — run local
+Whisper with Cohere structuring and you never need an OpenAI key at all.
 
 ## Usage
 
@@ -69,6 +78,7 @@ The structured prompt is also copied to your clipboard.
 ## Features
 
 - **Multilingual** — speak in Farsi, Spanish, German, etc. mixed with English tech terms
+- **Pluggable structuring** — Anthropic or Cohere, switchable in Settings
 - **Cloud or Local transcription** — OpenAI Whisper API or local whisper.cpp (offline, free)
 - **Model library** — choose from Tiny (75 MB) to Large V3 Turbo (1.6 GB)
 - **Auto-paste** — result injected into your active app via simulated keystroke
@@ -84,6 +94,7 @@ The structured prompt is also copied to your clipboard.
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
+COHERE_API_KEY=...        # optional, for the Cohere structuring backend
 ```
 
 These are used as defaults. Settings saved in the app UI take precedence.
@@ -109,6 +120,30 @@ Models are stored in `~/Library/Application Support/clarion/models/`.
 - **Svelte 5** — minimal frontend UI
 - **whisper-rs** — local whisper.cpp bindings
 - **enigo** — cross-platform keystroke simulation
+
+## Evaluation
+
+Clarion's users speak one language and code in another, so the structuring layer has to
+translate *and* leave code identifiers untouched. [`eval/`](eval/) measures how well
+different models actually do that on code-switched Persian/English developer speech.
+
+The primary metrics are deterministic — identifier recall (did `useState` survive
+verbatim?), residual non-English script, and format compliance — so anyone can recompute
+them from the committed run files and get identical numbers. Meaning and prompt quality
+are judged by LLMs, blind, with one judge per vendor and their disagreement reported.
+
+Every model gets the exact prompt and sampling settings the app ships with; a parity test
+fails if the app and the harness ever drift apart.
+
+```bash
+cd eval
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+python -m clarion_eval.run --no-judge
+```
+
+See [eval/README.md](eval/README.md) for methodology and limitations, and
+[eval/RESULTS.md](eval/RESULTS.md) for results.
 
 ## Releasing
 
@@ -151,6 +186,7 @@ Issues and pull requests are welcome. Before opening a PR, please run:
 npm run check          # Svelte + TypeScript
 cargo fmt --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml
+(cd eval && .venv/bin/python -m pytest tests -q)   # eval harness
 ```
 
 ## License
