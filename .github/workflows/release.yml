@@ -1,0 +1,61 @@
+name: Release
+
+# Builds a signed, notarized universal macOS app and attaches the DMG to a
+# draft GitHub Release. Trigger by pushing a tag: `git tag v0.1.0 && git push --tags`
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # whisper-rs builds whisper.cpp from source
+      - name: Ensure cmake
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code signing — set these in repo Settings → Secrets and variables → Actions.
+          # If unset, the build still succeeds but produces an UNSIGNED app.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Clarion ${{ github.ref_name }}
+          releaseBody: |
+            See the assets below to download and install.
+
+            **macOS**: download the `.dmg`, drag Clarion to Applications, and grant
+            Microphone + Accessibility permissions on first launch.
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin

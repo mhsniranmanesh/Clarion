@@ -2,4 +2,11 @@ node_modules/
 dist/
 .env
 .env.local
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
 *.tsbuildinfo
+
+# macOS
+.DS_Store

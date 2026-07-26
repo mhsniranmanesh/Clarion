@@ -1,0 +1,4 @@
+/* Global reset — component styles are in App.svelte */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
