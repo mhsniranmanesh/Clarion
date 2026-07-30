@@ -1,0 +1,116 @@
+{
+  "timestamp_utc": "20260730T195818Z",
+  "models": [
+    {
+      "key": "haiku",
+      "api_name": "claude-haiku-4-5-20251001",
+      "kind": "anthropic",
+      "label": "Claude Haiku 4.5"
+    },
+    {
+      "key": "command-a-plus",
+      "api_name": "command-a-plus-05-2026",
+      "kind": "cohere",
+      "label": "Command A+"
+    },
+    {
+      "key": "command-a-translate",
+      "api_name": "command-a-translate-08-2025",
+      "kind": "cohere",
+      "label": "Command A Translate"
+    },
+    {
+      "key": "tiny-aya-earth",
+      "api_name": "tiny-aya-earth",
+      "kind": "cohere",
+      "label": "Tiny Aya Earth (hosted)"
+    },
+    {
+      "key": "tiny-aya-water",
+      "api_name": "tiny-aya-water",
+      "kind": "cohere",
+      "label": "Tiny Aya Water (hosted)"
+    },
+    {
+      "key": "tiny-aya-global",
+      "api_name": "tiny-aya-global",
+      "kind": "cohere",
+      "label": "Tiny Aya Global (hosted)"
+    }
+  ],
+  "judges": [
+    {
+      "key": "judge-anthropic",
+      "kind": "anthropic",
+      "api_name": "claude-sonnet-4-6"
+    },
+    {
+      "key": "judge-cohere",
+      "kind": "cohere",
+      "api_name": "command-a-plus-05-2026"
+    }
+  ],
+  "dataset": "eval/data/utterances.jsonl",
+  "dataset_size": 210,
+  "dataset_reviewed": 35,
+  "languages": [
+    {
+      "code": "ar",
+      "name": "Arabic",
+      "total": 35,
+      "reviewed": 0,
+      "native_authored": 0,
+      "detection": "script",
+      "publishable": false
+    },
+    {
+      "code": "es",
+      "name": "Spanish",
+      "total": 35,
+      "reviewed": 0,
+      "native_authored": 0,
+      "detection": "function_words",
+      "publishable": false
+    },
+    {
+      "code": "fa",
+      "name": "Persian",
+      "total": 35,
+      "reviewed": 35,
+      "native_authored": 35,
+      "detection": "script",
+      "publishable": true
+    },
+    {
+      "code": "fr",
+      "name": "French",
+      "total": 35,
+      "reviewed": 0,
+      "native_authored": 0,
+      "detection": "function_words",
+      "publishable": false
+    },
+    {
+      "code": "ru",
+      "name": "Russian",
+      "total": 35,
+      "reviewed": 0,
+      "native_authored": 0,
+      "detection": "script",
+      "publishable": false
+    },
+    {
+      "code": "zh",
+      "name": "Chinese",
+      "total": 35,
+      "reviewed": 0,
+      "native_authored": 0,
+      "detection": "script",
+      "publishable": false
+    }
+  ],
+  "temperature": 0.3,
+  "max_tokens": 1024,
+  "system_prompt_sha256": "34edc2fe2fe1bc093c4c64c67992656e18065b6d0a7f0e7451223542b7a2ca08",
+  "gguf_path": null
+}

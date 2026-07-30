@@ -11,6 +11,9 @@ therefore a difference in the model, not in how it was asked.
 from __future__ import annotations
 
 import os
+import random
+import re
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +30,157 @@ TEMPERATURE = 0.3
 MAX_TOKENS = 1024
 
 REQUEST_TIMEOUT = 180
+
+MAX_ATTEMPTS = 6
+
+
+# ── Rate limiting ────────────────────────────────────────────────────────────
+#
+# A full run is well over a thousand calls. Without pacing most come back 429 and
+# the run reports a rate limit as if it were a model failure — which is how you
+# end up publishing "Tiny Aya Water scored 0%" when the truth is that it was
+# never asked.
+#
+# Limits are enforced **per model**, not per provider, because that is how Cohere
+# enforces them: the 429 body reads "past the per-minute request limit for this
+# model". A per-provider gate is the wrong shape — the runner interleaves models
+# (see `_generate`), so a single account-wide budget would either throttle the
+# whole run to one model's ceiling or let all workers pile onto one model and
+# blow it. Per-model gates let N models run at N x the per-model rate.
+
+_DEFAULT_RPM = {
+    "anthropic": 0,  # unlimited by default; paid tiers are generous
+    "cohere": 20,  # safe for trial keys; raise via CLARION_EVAL_COHERE_RPM
+}
+
+
+class _RateLimiter:
+    """Spaces calls so a provider's requests-per-minute cap is not exceeded.
+
+    Deliberately a simple minimum-interval gate rather than a token bucket. A
+    bucket would let a burst through at the start of a run and then stall; even
+    spacing keeps the latency numbers comparable across models, which is the
+    whole point of the harness.
+    """
+
+    def __init__(self, rpm: int) -> None:
+        self.interval = 60.0 / rpm if rpm > 0 else 0.0
+        self._lock = threading.Lock()
+        self._next_at = 0.0
+
+    def acquire(self) -> None:
+        if not self.interval:
+            return
+        with self._lock:
+            now = time.monotonic()
+            wait = max(0.0, self._next_at - now)
+            self._next_at = max(now, self._next_at) + self.interval
+        if wait:
+            time.sleep(wait)
+
+
+def _rpm_for(kind: str) -> int:
+    """Requests per minute allowed **per model** of this provider.
+
+    Overridable as e.g. `CLARION_EVAL_COHERE_RPM=30`.
+    """
+    override = os.environ.get(f"CLARION_EVAL_{kind.upper()}_RPM")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            pass
+    return _DEFAULT_RPM.get(kind, 0)
+
+
+_LIMITERS: dict[tuple[str, str], _RateLimiter] = {}
+_LIMITERS_LOCK = threading.Lock()
+
+
+def limiter(kind: str, api_name: str = "") -> _RateLimiter:
+    """The gate for one (provider, model) pair."""
+    key = (kind, api_name)
+    with _LIMITERS_LOCK:
+        if key not in _LIMITERS:
+            _LIMITERS[key] = _RateLimiter(_rpm_for(kind))
+        return _LIMITERS[key]
+
+
+def _retry_after(response: requests.Response, attempt: int) -> float:
+    """How long to wait before retrying, preferring the server's own answer."""
+    header = response.headers.get("Retry-After")
+    if header:
+        try:
+            return min(float(header), 120.0)
+        except ValueError:
+            pass
+    # Exponential backoff with jitter, so parallel workers do not resynchronise
+    # and hit the next window together.
+    return min(2.0**attempt, 60.0) * (0.5 + random.random())
+
+
+# A 429 means two completely different things and only one of them is worth
+# waiting for. "20 API calls / minute" clears in seconds. "1000 API calls /
+# month" does not clear this month, and retrying it six times with backoff turns
+# an instant failure into a 45-second one — which, across a thousand-call run,
+# is an hour spent confirming the quota is still gone.
+_QUOTA_EXHAUSTED = re.compile(
+    r"/\s*(?:month|day)\b"  # "1000 API calls / month"
+    r"|monthly limit"
+    r"|quota (?:exceeded|exhausted)"
+    r"|exceeded[^.]{0,40}quota"  # "exceeded your current quota"
+    r"|insufficient[_ ]quota",
+    re.IGNORECASE,
+)
+
+
+def is_quota_exhausted(body: str) -> bool:
+    """True when a 429 reports a spent billing-period quota, not a rate limit."""
+    return bool(_QUOTA_EXHAUSTED.search(body or ""))
+
+
+def _should_retry(status: int, body: str = "") -> bool:
+    if status == 429:
+        return not is_quota_exhausted(body)
+    return 500 <= status < 600
+
+
+def _post_with_retry(
+    kind: str, url: str, headers: dict, payload: dict, api_name: str = ""
+) -> tuple[requests.Response | None, str | None]:
+    """POSTs with rate limiting and retry. Returns (response, error).
+
+    A retried request is not a failed one: the error is only returned once the
+    attempts are exhausted, so a transient 429 does not get recorded as the model
+    declining to answer.
+    """
+    gate = limiter(kind, api_name)
+    last: str | None = None
+
+    for attempt in range(MAX_ATTEMPTS):
+        gate.acquire()
+        try:
+            response = requests.post(
+                url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT
+            )
+        except requests.RequestException as exc:
+            last = str(exc)
+            if attempt == MAX_ATTEMPTS - 1:
+                return None, last
+            time.sleep(min(2.0**attempt, 30.0) * (0.5 + random.random()))
+            continue
+
+        if response.status_code == 200:
+            return response, None
+
+        body = response.text
+        last = f"HTTP {response.status_code}: {body[:400]}"
+        if not _should_retry(response.status_code, body) or attempt == MAX_ATTEMPTS - 1:
+            return response, last
+
+        time.sleep(_retry_after(response, attempt))
+
+    return None, last
 
 
 def system_prompt() -> str:
@@ -68,30 +222,25 @@ def _anthropic(
         return Completion("", 0, error="ANTHROPIC_API_KEY is not set")
 
     started = time.monotonic()
-    try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": api_name,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "system": system,
-                "messages": [{"role": "user", "content": user}],
-            },
-            timeout=REQUEST_TIMEOUT,
-        )
-    except requests.RequestException as exc:
-        return Completion("", _ms(started), error=str(exc))
-
-    if resp.status_code != 200:
-        return Completion(
-            "", _ms(started), error=f"HTTP {resp.status_code}: {resp.text[:400]}"
-        )
+    resp, error = _post_with_retry(
+        "anthropic",
+        "https://api.anthropic.com/v1/messages",
+        {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        {
+            "model": api_name,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        },
+        api_name=api_name,
+    )
+    if error or resp is None:
+        return Completion("", _ms(started), error=error or "no response")
 
     blocks = resp.json().get("content", [])
     text = next((b.get("text", "") for b in blocks if b.get("type") == "text"), "")
@@ -109,32 +258,27 @@ def _cohere(
         return Completion("", 0, error="COHERE_API_KEY is not set")
 
     started = time.monotonic()
-    try:
-        resp = requests.post(
-            "https://api.cohere.com/v2/chat",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "content-type": "application/json",
-            },
-            json={
-                "model": api_name,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": False,
-            },
-            timeout=REQUEST_TIMEOUT,
-        )
-    except requests.RequestException as exc:
-        return Completion("", _ms(started), error=str(exc))
-
-    if resp.status_code != 200:
-        return Completion(
-            "", _ms(started), error=f"HTTP {resp.status_code}: {resp.text[:400]}"
-        )
+    resp, error = _post_with_retry(
+        "cohere",
+        "https://api.cohere.com/v2/chat",
+        {
+            "Authorization": f"Bearer {key}",
+            "content-type": "application/json",
+        },
+        {
+            "model": api_name,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        },
+        api_name=api_name,
+    )
+    if error or resp is None:
+        return Completion("", _ms(started), error=error or "no response")
 
     blocks = resp.json().get("message", {}).get("content", [])
     text = next((b.get("text", "") for b in blocks if b.get("type") == "text"), "")

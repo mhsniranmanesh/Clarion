@@ -60,6 +60,9 @@ class TestIdentifierRecall:
 
 
 class TestScript:
+    """Per-language behaviour lives in test_languages.py; these cover the
+    default path and the shape of the result."""
+
     def test_clean_english_has_no_residue(self):
         score = metrics.score_script("Fix the login button so it submits once.")
         assert score.fully_english
@@ -73,6 +76,10 @@ class TestScript:
 
     def test_persian_digits_count_as_residue(self):
         assert metrics.score_script("retry ۳ times").residual_chars == 1
+
+    def test_language_is_selectable(self):
+        assert metrics.score_script("修复按钮", "zh").residual_chars == 4
+        assert metrics.score_script("修复按钮", "fa").residual_chars == 0
 
 
 class TestFormat:
@@ -111,10 +118,25 @@ class TestAggregate:
         result = metrics.score_all("Use useState.", ["useState"], "Use useState.")
         payload = result.to_dict()
         for field in (
+            "lang",
             "identifier_recall",
-            "residual_persian_chars",
+            "residual_source_chars",
+            "residual_method",
+            "residual_exact",
             "fully_english",
             "format_clean",
             "length_ratio",
         ):
             assert field in payload
+
+    def test_language_reaches_the_record(self):
+        """The report splits by `lang`, so it has to survive into the run file."""
+        payload = metrics.score_all("Use useState.", [], "gloss", "fr").to_dict()
+        assert payload["lang"] == "fr"
+        assert payload["residual_method"] == "function_words"
+        assert payload["residual_exact"] is False
+
+    def test_script_language_is_marked_exact(self):
+        payload = metrics.score_all("Use useState.", [], "gloss", "ru").to_dict()
+        assert payload["residual_method"] == "script"
+        assert payload["residual_exact"] is True

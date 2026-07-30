@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+
+from . import languages
 
 # ── Identifier preservation ──────────────────────────────────────────────────
 
@@ -84,42 +86,85 @@ def score_identifiers(identifiers: list[str], output: str) -> IdentifierScore:
     )
 
 
-# ── Residual non-English script ──────────────────────────────────────────────
-
-# Persian is written in Arabic script. Any codepoint from these blocks surviving
-# into the output means the model failed to translate that span.
-_ARABIC_BLOCKS = (
-    (0x0600, 0x06FF),  # Arabic
-    (0x0750, 0x077F),  # Arabic Supplement
-    (0x08A0, 0x08FF),  # Arabic Extended-A
-    (0xFB50, 0xFDFF),  # Presentation Forms-A
-    (0xFE70, 0xFEFF),  # Presentation Forms-B
-)
-
-
-def _is_arabic_script(ch: str) -> bool:
-    cp = ord(ch)
-    return any(lo <= cp <= hi for lo, hi in _ARABIC_BLOCKS)
+# ── Residual source language ─────────────────────────────────────────────────
 
 
 @dataclass
 class ScriptScore:
     residual_chars: int
     residual_sample: str
+    method: str = "script"
+    markers: list[str] = field(default_factory=list)
 
     @property
     def fully_english(self) -> bool:
         return self.residual_chars == 0
 
+    @property
+    def exact(self) -> bool:
+        """True when the verdict is a proof, not a heuristic.
 
-def score_script(output: str) -> ScriptScore:
-    """Counts Persian/Arabic-script characters left in the English output.
+        Script detection cannot produce a false positive: a Han or Cyrillic
+        codepoint in the output is untranslated source, full stop. Function-word
+        detection can in principle misfire, so it is labelled differently
+        everywhere it is reported.
+        """
+        return self.method == "script"
 
-    Unambiguous and binary in practice: a correct answer has zero.
+
+def _score_by_script(output: str, lang: languages.Language) -> ScriptScore:
+    residual = [
+        ch
+        for ch in output
+        if any(lo <= ord(ch) <= hi for lo, hi in lang.ranges)
+    ]
+    return ScriptScore(
+        residual_chars=len(residual),
+        residual_sample="".join(residual[:60]),
+        method="script",
+    )
+
+
+# Words are compared lowercased and apostrophe-normalised, so `C'est` and `c’est`
+# both match the marker `c'est`.
+_TOKEN = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?", re.UNICODE)
+
+
+def _score_by_function_words(output: str, lang: languages.Language) -> ScriptScore:
+    hits: list[str] = []
+
+    for raw in _TOKEN.findall(output):
+        token = raw.lower().replace("’", "'")
+        if token in lang.words:
+            hits.append(raw)
+
+    hits += [ch for ch in output if ch in lang.chars]
+
+    normalised = output.replace("’", "'")
+    for pattern in lang.patterns:
+        hits += re.findall(pattern, normalised, re.IGNORECASE)
+
+    return ScriptScore(
+        residual_chars=len(hits),
+        residual_sample=" ".join(hits[:20]),
+        method="function_words",
+        markers=sorted({h.lower() for h in hits}),
+    )
+
+
+def score_script(output: str, lang: str | languages.Language = "fa") -> ScriptScore:
+    """Detects source-language text surviving into an output that must be English.
+
+    Dispatches on the language's declared detection method. For script languages
+    a correct answer has exactly zero residue and the check is exact. For
+    Latin-script languages it counts high-frequency source-language function
+    words, which is a heuristic — `ScriptScore.exact` says which you got, and the
+    report prints the two in separate columns.
     """
-    residual = [ch for ch in output if _is_arabic_script(ch)]
-    sample = "".join(residual[:60])
-    return ScriptScore(residual_chars=len(residual), residual_sample=sample)
+    language = lang if isinstance(lang, languages.Language) else languages.get(lang)
+    if language.detection == "script":
+        return _score_by_script(output, language)
+    return _score_by_function_words(output, language)
 
 
 # ── Format compliance ────────────────────────────────────────────────────────
@@ -192,9 +237,11 @@ class DeterministicScores:
     fmt: FormatScore
     length_ratio: float
     empty_output: bool
+    lang: str
 
     def to_dict(self) -> dict:
         return {
+            "lang": self.lang,
             "identifier_recall": round(self.identifiers.recall, 4),
             "identifier_recall_ci": round(
                 self.identifiers.recall_case_insensitive, 4
@@ -203,8 +250,11 @@ class DeterministicScores:
             "identifiers_preserved": self.identifiers.preserved,
             "identifiers_missing": self.identifiers.missing,
             "identifiers_case_only_errors": self.identifiers.case_only_errors,
-            "residual_persian_chars": self.script.residual_chars,
-            "residual_persian_sample": self.script.residual_sample,
+            "residual_source_chars": self.script.residual_chars,
+            "residual_source_sample": self.script.residual_sample,
+            "residual_method": self.script.method,
+            "residual_markers": self.script.markers,
+            "residual_exact": self.script.exact,
             "fully_english": self.script.fully_english,
             "format_clean": self.fmt.clean,
             "format_violations": self.fmt.violations,
@@ -213,14 +263,17 @@ class DeterministicScores:
         }
 
 
-def score_all(output: str, identifiers: list[str], gloss: str) -> DeterministicScores:
+def score_all(
+    output: str, identifiers: list[str], gloss: str, lang: str = "fa"
+) -> DeterministicScores:
     normalised = unicodedata.normalize("NFC", output or "")
     return DeterministicScores(
         identifiers=score_identifiers(identifiers, normalised),
-        script=score_script(normalised),
+        script=score_script(normalised, lang),
         fmt=score_format(normalised),
         length_ratio=length_ratio(normalised, gloss),
         empty_output=not normalised.strip(),
+        lang=languages.get(lang).code,
     )
 
 

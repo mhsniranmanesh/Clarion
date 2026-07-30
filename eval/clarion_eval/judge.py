@@ -21,15 +21,22 @@ import random
 import re
 from dataclasses import dataclass
 
+from . import languages
 from .providers import chat
 
 JUDGE_TEMPERATURE = 0.0
-JUDGE_MAX_TOKENS = 2048
 
-JUDGE_SYSTEM = """\
+# Sized for the whole grid, not one comparison. The budget has to cover a score
+# object per candidate, so it scales with how many models are in the run — 2048
+# was ample for four candidates and truncated mid-JSON on six whenever the judge
+# wrote detailed notes. A truncated response is a *lost verdict*, not a bad one,
+# so this is bought cheaply: unused budget costs nothing.
+JUDGE_MAX_TOKENS = 4096
+
+JUDGE_SYSTEM_TEMPLATE = """\
 You are grading how well different systems converted one spoken, code-switched \
 utterance from a software developer into an English prompt for an AI coding \
-assistant. The speaker mixes Persian with English technical terms.
+assistant. The speaker mixes {language} with English technical terms.
 
 You will be given the original utterance, a reference gloss of what the speaker \
 meant, and several candidate outputs labelled A, B, C, ...
@@ -53,9 +60,21 @@ quality — is it a good prompt to hand to a coding assistant?
 Judge only these two axes. Do not reward or punish length, formatting, or the \
 presence of a preamble — those are measured separately.
 
+Keep each note under 15 words. Long notes push the response past its token \
+budget and the whole verdict is lost, including the scores.
+
 Respond with ONLY a JSON object, no prose and no code fence:
-{"scores": {"A": {"fidelity": 4, "quality": 5, "note": "brief reason"}, ...}}
+{{"scores": {{"A": {{"fidelity": 4, "quality": 5, "note": "brief reason"}}, ...}}}}
 """
+
+
+def judge_system(lang: str) -> str:
+    """The grading rubric, named for the language actually being judged.
+
+    A judge told the input is Persian while reading Mandarin has been handed a
+    reason to mark every candidate down.
+    """
+    return JUDGE_SYSTEM_TEMPLATE.format(language=languages.get(lang).name)
 
 
 @dataclass(frozen=True)
@@ -69,16 +88,17 @@ class JudgeSpec:
 # One judge per vendor. Override with --judge if either ID is unavailable on
 # your account; the run records whichever judges actually answered.
 DEFAULT_JUDGES = [
-    JudgeSpec("judge-anthropic", "anthropic", "claude-sonnet-4-6-20250514", "Claude Sonnet 4.6"),
+    JudgeSpec("judge-anthropic", "anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6"),
     JudgeSpec("judge-cohere", "cohere", "command-a-plus-05-2026", "Command A+"),
 ]
 
 
 def _build_user_message(
-    utterance: str, gloss: str, labelled: dict[str, str]
+    utterance: str, gloss: str, labelled: dict[str, str], lang: str
 ) -> str:
+    language = languages.get(lang)
     parts = [
-        "Original utterance (code-switched Persian/English):",
+        f"Original utterance (code-switched {language.name}/English):",
         utterance,
         "",
         "Reference gloss of the speaker's intent (written by a native speaker):",
@@ -93,6 +113,32 @@ def _build_user_message(
     return "\n".join(parts)
 
 
+# One complete `"A": {...}` entry. Used to salvage a response that was cut off
+# partway through, where the entries that did arrive are still perfectly good.
+_SCORE_ENTRY = re.compile(r'"([A-Za-z])"\s*:\s*(\{[^{}]*\})')
+
+
+def _salvage_scores(raw: str) -> dict | None:
+    """Recovers whole candidate entries from a response that failed to parse.
+
+    A verdict truncated mid-JSON is not a wrong answer, it is a partial one —
+    the candidates already emitted were scored correctly. Discarding all of them
+    because the last one was cut off throws away good data and, worse, does it
+    unevenly: the judge writes candidates in label order, so the loss always
+    falls on the same labels. Salvaging keeps whatever survived, and the
+    caller's existing `judge omitted: ...` path records the rest as missing.
+    """
+    scores = {}
+    for label, blob in _SCORE_ENTRY.findall(raw):
+        try:
+            payload = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+        if "fidelity" in payload and "quality" in payload:
+            scores[label] = payload
+    return {"scores": scores} if scores else None
+
+
 def _extract_json(raw: str) -> dict | None:
     """Judges occasionally wrap JSON in a fence despite instructions."""
     candidate = raw.strip()
@@ -100,12 +146,12 @@ def _extract_json(raw: str) -> dict | None:
     if fence:
         candidate = fence.group(1)
     start, end = candidate.find("{"), candidate.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        return json.loads(candidate[start : end + 1])
-    except json.JSONDecodeError:
-        return None
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(candidate[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+    return _salvage_scores(candidate)
 
 
 def blind_labels(utterance_id: str, model_keys: list[str]) -> dict[str, str]:
@@ -121,6 +167,7 @@ def judge_utterance(
     utterance: str,
     gloss: str,
     outputs: dict[str, str],
+    lang: str = "fa",
 ) -> dict:
     """Scores one utterance's candidates. Returns {model_key: {...}} plus errors.
 
@@ -134,8 +181,8 @@ def judge_utterance(
     result = chat(
         judge.kind,
         judge.api_name,
-        JUDGE_SYSTEM,
-        _build_user_message(utterance, gloss, labelled),
+        judge_system(lang),
+        _build_user_message(utterance, gloss, labelled, lang),
         temperature=JUDGE_TEMPERATURE,
         max_tokens=JUDGE_MAX_TOKENS,
     )
