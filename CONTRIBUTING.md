@@ -36,6 +36,20 @@ cargo test  --manifest-path src-tauri/Cargo.toml
 (cd eval && .venv/bin/python -m pytest tests -q)
 ```
 
+## Screenshots
+
+The images in `docs/media/` are captured from the running app, so they go stale the moment
+the UI changes and nothing will tell you. After a visible change to `src/App.svelte`:
+
+```bash
+npm run tauri:dev &            # wait for the window to appear
+./scripts/capture-screenshots.sh
+```
+
+Needs Screen Recording and Accessibility permission for your terminal. Without them the
+script appears to succeed and writes the wrong picture, so look at the output before
+committing it.
+
 ## Invariants
 
 These are the places where a reasonable-looking change compiles, passes review, and is
