@@ -36,6 +36,16 @@ struct ApiResponse {
     content: Vec<ContentBlock>,
 }
 
+/// The first `text` block, or `fallback` when the response carries none.
+/// See the equivalent in `cohere.rs` — the Messages API has the same shape.
+fn first_text_block(blocks: &[ContentBlock], fallback: &str) -> String {
+    blocks
+        .iter()
+        .find(|block| block.block_type == "text")
+        .and_then(|block| block.text.clone())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 pub async fn structure_prompt(
     raw_text: &str,
     model: &str,
@@ -79,15 +89,77 @@ pub async fn structure_prompt(
         .await
         .map_err(|e| format!("Failed to parse Anthropic response: {e}"))?;
 
-    let structured = result
-        .content
-        .iter()
-        .find(|block| block.block_type == "text")
-        .and_then(|block| block.text.clone())
-        .unwrap_or_else(|| raw_text.to_string());
-
     Ok(StructureResult {
         original: raw_text.to_string(),
-        structured,
+        structured: first_text_block(&result.content, raw_text),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blocks(json: &str) -> Vec<ContentBlock> {
+        serde_json::from_str::<ApiResponse>(json).unwrap().content
+    }
+
+    #[test]
+    fn reads_a_plain_text_response() {
+        let parsed = blocks(r#"{"content":[{"type":"text","text":"Add a retry"}]}"#);
+        assert_eq!(first_text_block(&parsed, "raw"), "Add a retry");
+    }
+
+    #[test]
+    fn skips_a_leading_thinking_block() {
+        let parsed = blocks(
+            r#"{"content":[
+                {"type":"thinking","thinking":"..."},
+                {"type":"text","text":"Add a retry"}
+            ]}"#,
+        );
+        assert_eq!(first_text_block(&parsed, "raw"), "Add a retry");
+    }
+
+    #[test]
+    fn falls_back_to_the_transcription_when_no_text_block_arrives() {
+        let parsed = blocks(r#"{"content":[{"type":"thinking","thinking":"..."}]}"#);
+        assert_eq!(
+            first_text_block(&parsed, "raw transcription"),
+            "raw transcription"
+        );
+    }
+
+    #[test]
+    fn request_matches_the_messages_schema() {
+        // Anthropic takes `system` at the top level, not as a message. Sending
+        // it as a message is accepted and silently ignored — the model then
+        // answers with no instructions at all, which is the worst failure mode:
+        // a plausible-looking wrong result.
+        let request = ApiRequest {
+            model: "claude-haiku-4-5-20251001".into(),
+            max_tokens: MAX_TOKENS,
+            temperature: TEMPERATURE,
+            system: "sys".into(),
+            messages: vec![Message {
+                role: "user".into(),
+                content: "usr".into(),
+            }],
+        };
+        let json = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(json["system"], "sys");
+        assert_eq!(json["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(json["messages"][0]["role"], "user");
+    }
+
+    #[tokio::test]
+    async fn a_blank_key_fails_before_any_network_call() {
+        let error = structure_prompt("hello", "claude-haiku-4-5-20251001", "", None)
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("Settings"),
+            "error should tell the user where to fix it"
+        );
+    }
 }

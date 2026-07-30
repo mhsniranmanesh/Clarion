@@ -460,7 +460,7 @@
             </label>
             <select id="model" bind:value={config.preprocess_model}>
               <option value="claude-haiku-4-5-20251001">Haiku 4.5 — fast, low cost</option>
-              <option value="claude-sonnet-4-6-20250514">Sonnet 4.6 — higher quality</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6 — higher quality</option>
             </select>
           </div>
         {:else}
@@ -473,14 +473,18 @@
               <option value="command-a-plus-05-2026">Command A+ — flagship</option>
               <option value="command-a-03-2025">Command A</option>
               <option value="command-a-translate-08-2025">Command A Translate — translation-tuned</option>
-              <option value="tiny-aya-earth">Tiny Aya Earth — 3.35B, West Asian + African</option>
+              <option value="tiny-aya-earth">Tiny Aya Earth — 3.35B, African + West Asian</option>
+              <option value="tiny-aya-water">Tiny Aya Water — 3.35B, European + Asia-Pacific</option>
+              <option value="tiny-aya-fire">Tiny Aya Fire — 3.35B, South Asian</option>
               <option value="tiny-aya-global">Tiny Aya Global — 3.35B, balanced</option>
               <option value="command-r7b-12-2024">Command R7B — small, fast</option>
             </select>
           </div>
           <p class="section-hint">
-            Tiny Aya covers 70 languages including Persian at 3.35B parameters. See
-            <code>eval/</code> in the repo for measured quality on code-switched speech.
+            Tiny Aya covers 70 languages at 3.35B parameters. The four variants are the
+            same model tuned toward different regions — but Clarion's own evaluation
+            found the region-matched variant did not reliably win, so try a few. See
+            <code>eval/</code> in the repo for the numbers.
           </p>
         {/if}
         <div class="input-group">

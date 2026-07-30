@@ -74,3 +74,75 @@ pub async fn structure_prompt(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ContextFile;
+
+    fn context(files: Vec<ContextFile>) -> ProjectContext {
+        ProjectContext {
+            project_name: Some("Clarion".into()),
+            files,
+        }
+    }
+
+    #[test]
+    fn provider_tags_match_the_typescript_union() {
+        // AppConfig is hand-mirrored in src/App.svelte with no codegen between
+        // them. If these tags change, the frontend keeps sending the old string
+        // and deserialization fails at runtime with no compile error anywhere.
+        assert_eq!(
+            serde_json::to_value(StructureProvider::Anthropic).unwrap(),
+            "anthropic"
+        );
+        assert_eq!(
+            serde_json::to_value(StructureProvider::Cohere).unwrap(),
+            "cohere"
+        );
+        assert_eq!(
+            serde_json::from_str::<StructureProvider>("\"cohere\"").unwrap(),
+            StructureProvider::Cohere
+        );
+    }
+
+    #[test]
+    fn the_base_prompt_is_the_shared_file() {
+        let prompt = build_system_prompt(None);
+        assert_eq!(prompt, SYSTEM_PROMPT.trim_end());
+        assert!(!prompt.is_empty());
+    }
+
+    #[test]
+    fn project_context_is_appended_not_substituted() {
+        // The shared prompt is what the eval harness measures. Context is extra
+        // grounding on top of it; replacing it would make every published number
+        // describe a prompt the app no longer sends.
+        let prompt = build_system_prompt(Some(&context(vec![ContextFile {
+            path: "CLAUDE.md".into(),
+            content: "useDebounce is our hook".into(),
+        }])));
+
+        assert!(prompt.starts_with(SYSTEM_PROMPT.trim_end()));
+        assert!(prompt.contains("CLAUDE.md"));
+        assert!(prompt.contains("useDebounce is our hook"));
+        assert!(prompt.contains("Project: Clarion"));
+    }
+
+    #[test]
+    fn an_empty_context_adds_nothing() {
+        // Pointing Clarion at a directory with no readable context files must
+        // not append a dangling, empty "Project context:" header.
+        assert_eq!(
+            build_system_prompt(Some(&context(vec![]))),
+            SYSTEM_PROMPT.trim_end()
+        );
+    }
+
+    #[test]
+    fn the_user_turn_quotes_the_transcription() {
+        let message = build_user_message("add a retry to fetchUser");
+        assert!(message.contains("\"add a retry to fetchUser\""));
+        assert!(message.ends_with("Structured English prompt:"));
+    }
+}
