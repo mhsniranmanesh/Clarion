@@ -67,8 +67,12 @@ native speaker signs off. See [`eval/RESULTS.md`](eval/RESULTS.md) for the full 
 
 ### Download
 
-Grab the latest `.dmg` from the [Releases page](https://github.com/mhsniranmanesh/Clarion/releases),
-drag Clarion to Applications, and launch it.
+> **No binary release is published yet.** Build from source below — it takes one command.
+> The first signed release will appear on the Releases page.
+
+Once one exists: grab the latest `.dmg` from the
+[Releases page](https://github.com/mhsniranmanesh/Clarion/releases), drag Clarion to
+Applications, and launch it.
 
 On first run macOS will ask for two permissions — both are required:
 
@@ -206,8 +210,20 @@ live in the repo. To produce a distributable build, set these as GitHub Actions 
 | `APPLE_PASSWORD` | App-specific password for that Apple ID |
 | `APPLE_TEAM_ID` | Apple Developer Team ID |
 
-Without them the build still succeeds, but the app is unsigned and users must clear the
-quarantine flag manually (see Install above).
+`APPLE_CERTIFICATE` is the only one that needs producing rather than looking up. Export
+your Developer ID Application certificate from Keychain Access as a `.p12`, then:
+
+```bash
+base64 -i DeveloperID.p12 | pbcopy   # paste as the APPLE_CERTIFICATE secret
+```
+
+`APPLE_PASSWORD` is an [app-specific password](https://support.apple.com/en-us/102654),
+not your Apple ID password. Find `APPLE_SIGNING_IDENTITY` with
+`security find-identity -v -p codesigning`.
+
+Without these the build still succeeds, but the app is unsigned and every user must clear
+the quarantine flag by hand (see Install above) — which in practice means most of them
+won't install it at all.
 
 ## Roadmap
 
