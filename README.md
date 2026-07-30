@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src-tauri/icons/clarion-icon.svg" width="96" alt="Clarion">
+<img src="src-tauri/icons/128x128@2x.png" width="96" alt="Clarion">
 
 # Clarion
 
