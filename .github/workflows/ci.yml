@@ -1,0 +1,69 @@
+name: CI
+
+# Every check a contributor is asked to run in CONTRIBUTING.md, run automatically.
+# Release builds are separate (release.yml, tag-triggered) because they need
+# signing secrets and take an order of magnitude longer.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Svelte + TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  rust:
+    name: Rust
+    # macOS because the backend links against CoreAudio and the macOS
+    # accessibility APIs; it does not build on Linux.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Ensure cmake
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
+
+      # The frontend dist/ is a build input for tauri::generate_context!, so it
+      # has to exist before cargo runs — even for a check-only build.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci && npm run build
+
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  eval:
+    name: Eval harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ./eval
+      # No API keys in CI. These tests are all offline: dataset validation,
+      # metric scoring, language detection, and the parity check that fails if
+      # the app's prompt and sampling settings drift from the harness's.
+      - run: python -m pytest eval/tests -q

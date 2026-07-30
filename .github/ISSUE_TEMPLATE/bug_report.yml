@@ -1,0 +1,75 @@
+name: Bug report
+description: Something in Clarion does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please redact API keys from anything you paste.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Hold ⌘⇧Space
+        2. Say "..." in <language>
+        3. Release
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      options:
+        - Release .dmg from the Releases page
+        - Built from source (npm run tauri:build)
+        - Development (npm run tauri:dev)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transcription
+    attributes:
+      label: Transcription backend
+      options: [Cloud (OpenAI Whisper), Local (whisper.cpp)]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: structuring
+    attributes:
+      label: Structuring backend
+      options: [Anthropic, Cohere]
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Spoken language
+      placeholder: e.g. Farsi mixed with English technical terms
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g. 15.2 (Apple silicon)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from the app log. Redact any API keys.
+      render: shell
