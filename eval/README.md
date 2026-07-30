@@ -116,7 +116,7 @@ materially, treat them as weak.
 ```bash
 cd eval
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .            # add '.[local]' for on-device GGUF
+pip install -e '.[dev]'     # '.[local]' adds on-device GGUF inference
 ```
 
 Keys are read from `eval/.env` then the repo-root `.env`:

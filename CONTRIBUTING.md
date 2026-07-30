@@ -18,7 +18,7 @@ For the evaluation harness:
 ```bash
 cd eval
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e '.[dev]'            # [dev] adds pytest
 python -m pytest tests -q          # offline, no API keys needed
 ```
 

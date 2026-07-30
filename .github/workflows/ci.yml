@@ -62,7 +62,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ./eval
+      - run: pip install -e './eval[dev]'
       # No API keys in CI. These tests are all offline: dataset validation,
       # metric scoring, language detection, and the parity check that fails if
       # the app's prompt and sampling settings drift from the harness's.

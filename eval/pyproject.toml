@@ -13,6 +13,10 @@ dependencies = [
 # toolchain; the API-backed models work without it.
 local = ["llama-cpp-python>=0.3.0"]
 
+# Everything the test suite needs. CI installs this extra; the suite is fully
+# offline, so no API keys are involved.
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 clarion-eval = "clarion_eval.run:main"
 
